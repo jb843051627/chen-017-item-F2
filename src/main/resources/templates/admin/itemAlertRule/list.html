@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('办件逾期风险判定线册')"/>
+</head>
+<body class="pear-container">
+<div class="layui-card">
+    <div class="layui-card-body">
+        <form class="layui-form" action="">
+            <div class="layui-form-item">
+                <label class="layui-form-label">事由</label>
+                <div class="layui-input-inline">
+                    <select name="affairType">
+                        <option value="">全部</option>
+                        <option value="1">即办件</option>
+                        <option value="2">承诺件</option>
+                        <option value="3">转报件</option>
+                    </select>
+                </div>
+                <label class="layui-form-label">旗</label>
+                <div class="layui-input-inline">
+                    <select name="status">
+                        <option value="">全部</option>
+                        <option value="0">在档</option>
+                        <option value="1">收档</option>
+                    </select>
+                </div>
+                <button class="pear-btn pear-btn-md pear-btn-primary" lay-submit lay-filter="rule-query">
+                    <i class="layui-icon layui-icon-search"></i> 翻册
+                </button>
+                <button type="reset" class="pear-btn pear-btn-md">
+                    <i class="layui-icon layui-icon-refresh"></i> 重置
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<div class="layui-card">
+    <div class="layui-card-body">
+        <table id="rule-table" lay-filter="rule-table"></table>
+    </div>
+</div>
+
+<script type="text/html" id="rule-toolbar">
+    <button shiro:hasPermission="item:itemAlertRule:add" class="pear-btn pear-btn-primary pear-btn-md" lay-event="add">
+        <i class="layui-icon layui-icon-add-1"></i> 立新尺
+    </button>
+    <span class="pear-text" style="margin-left:12px;color:#999">换尺不删旧：收档行次留册，只许倒查来历，不进当下判定。</span>
+</script>
+
+<script type="text/html" id="rule-bar">
+    {{# if(d.status === 0){ }}
+    <button shiro:hasPermission="item:itemAlertRule:edit" class="pear-btn pear-btn-warming pear-btn-sm" lay-event="archive">
+        <i class="layui-icon layui-icon-remove"></i> 收档
+    </button>
+    {{# } else { }}
+    <button class="pear-btn pear-btn-sm" lay-event="detail"><i class="layui-icon layui-icon-about"></i> 倒查来历</button>
+    {{# } }}
+</script>
+
+<script type="text/html" id="rule-affair">
+    {{# if(d.affairType === 1){ }}<span>即办件</span>
+    {{# } else if(d.affairType === 2){ }}<span>承诺件</span>
+    {{# } else if(d.affairType === 3){ }}<span>转报件</span>{{# } }}
+</script>
+
+<script type="text/html" id="rule-status">
+    {{# if(d.status === 0){ }}
+    <span class="layui-badge layui-bg-green">在档</span>
+    {{# } else { }}
+    <span class="layui-badge layui-bg-gray">收档（只许倒查）</span>
+    {{# } }}
+</script>
+
+<script type="text/html" id="rule-th3">
+    {{# if(d.th3Max === null || d.th3Max === ''){ }}<span style="color:#999">空（高段不设，随中段落）</span>{{# } else { }}{{ d.th3Max }}{{# } }}
+</script>
+</body>
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['table', 'form', 'jquery'], function () {
+        let table = layui.table;
+        let form = layui.form;
+        let $ = layui.jquery;
+        let MODULE_PATH = rootPath + "/ItemAlertRuleController/";
+
+        table.render({
+            elem: '#rule-table',
+            url: MODULE_PATH + 'list',
+            method: 'get',
+            page: true,
+            toolbar: '#rule-toolbar',
+            cols: [[
+                {field: 'ruleCode', title: '代号', width: 150},
+                {field: 'ruleName', title: '线名', minWidth: 200},
+                {field: 'affairType', title: '事由', width: 90, templet: '#rule-affair'},
+                {field: 'th1Max', title: '低界%', width: 90},
+                {field: 'th2Max', title: '中界%', width: 90},
+                {field: 'th3Max', title: '高界%', width: 170, templet: '#rule-th3'},
+                {field: 'effStart', title: '上架之日(含)', width: 170},
+                {field: 'effEnd', title: '收档之日(不含)', width: 170},
+                {field: 'priority', title: '尊卑次序', width: 100},
+                {field: 'status', title: '旗', width: 140, templet: '#rule-status'},
+                {title: '操作', templet: '#rule-bar', width: 130, align: 'center'}
+            ]]
+        });
+
+        form.on('submit(rule-query)', function (data) {
+            table.reload('rule-table', {
+                page: {curr: 1},
+                where: {affairType: data.field.affairType, status: data.field.status}
+            });
+            return false;
+        });
+
+        table.on('toolbar(rule-table)', function (obj) {
+            if (obj.event === 'add') {
+                layer.open({
+                    type: 2, title: '立新尺入册', shade: 0.1,
+                    area: ['560px', '600px'], content: MODULE_PATH + 'add'
+                });
+            }
+        });
+
+        table.on('tool(rule-table)', function (obj) {
+            if (obj.event === 'archive') {
+                layer.prompt({
+                    title: '收档之日（yyyy-MM-dd，旧线管到此刻为止、不含；留空用今日）',
+                    value: layui.util.toDateString(new Date().getTime(), 'yyyy-MM-dd'),
+                    formType: 0
+                }, function (value, index) {
+                    $.post(MODULE_PATH + 'archive', {id: obj.data.id, effEnd: value}, function (res) {
+                        layer.msg(res.msg, {icon: res.code === 200 ? 1 : 2});
+                        if (res.code === 200) {
+                            layer.close(index);
+                            table.reload('rule-table');
+                        }
+                    });
+                });
+            } else if (obj.event === 'detail') {
+                $.get(MODULE_PATH + 'detail/' + obj.data.id, function (res) {
+                    if (res.code !== 200) {
+                        layer.msg(res.msg, {icon: 2});
+                        return;
+                    }
+                    let r = res.data;
+                    layer.open({
+                        type: 1, title: '倒查来历 · ' + r.ruleCode, area: ['480px', '420px'],
+                        content: '<pre style="padding:16px;line-height:1.9">' + JSON.stringify(r, null, 2) + '</pre>'
+                    });
+                });
+            }
+        });
+    });
+</script>
+</html>

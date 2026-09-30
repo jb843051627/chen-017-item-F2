@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <th:block th:include="include :: header('立新尺入册')"/>
+</head>
+<body>
+<form class="layui-form">
+    <div class="mainBox">
+        <div class="main-container">
+            <div class="layui-form-item">
+                <label class="layui-form-label">代号</label>
+                <div class="layui-input-block">
+                    <input type="text" name="ruleCode" autocomplete="off" placeholder="省里给的、局里加的，都各独占一个" class="layui-input">
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">线名</label>
+                <div class="layui-input-block">
+                    <input type="text" name="ruleName" autocomplete="off" placeholder="这条尺叫什么" class="layui-input">
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">事由</label>
+                <div class="layui-input-block">
+                    <select name="affairType">
+                        <option value="1">即办件</option>
+                        <option value="2" selected>承诺件</option>
+                        <option value="3">转报件</option>
+                    </select>
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">低界%</label>
+                <div class="layui-input-inline" style="width:150px">
+                    <input type="number" step="0.01" name="th1Max" autocomplete="off" class="layui-input">
+                </div>
+                <label class="layui-form-label" style="width:90px">中界%</label>
+                <div class="layui-input-inline" style="width:150px">
+                    <input type="number" step="0.01" name="th2Max" autocomplete="off" class="layui-input">
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">高界%</label>
+                <div class="layui-input-inline" style="width:150px">
+                    <input type="number" step="0.01" name="th3Max" autocomplete="off" class="layui-input">
+                </div>
+                <div class="layui-form-mid layui-word-aux">早年纸质尺可留空——空着不设高段，随中段往下落</div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">上架之日</label>
+                <div class="layui-input-inline" style="width:200px">
+                    <input type="text" name="effStart" id="effStart" autocomplete="off" placeholder="yyyy-MM-dd" class="layui-input">
+                </div>
+                <label class="layui-form-label" style="width:100px">预定收档日</label>
+                <div class="layui-input-inline" style="width:200px">
+                    <input type="text" name="effEnd" id="effEnd" autocomplete="off" placeholder="可空；预定换手时填，旧线管到此刻(不含)" class="layui-input">
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">尊卑次序</label>
+                <div class="layui-input-inline" style="width:120px">
+                    <input type="number" name="priority" value="100" autocomplete="off" class="layui-input">
+                </div>
+                <div class="layui-form-mid layui-word-aux">数大先开口；并列认代号靠后者。即时收档用册上"收档"按钮。</div>
+            </div>
+        </div>
+    </div>
+    <div class="bottom">
+        <div class="button-container">
+            <button type="submit" class="layui-btn layui-btn-normal layui-btn-sm" lay-submit lay-filter="rule-save">
+                <i class="layui-icon layui-icon-ok"></i> 入册
+            </button>
+            <button type="reset" class="layui-btn layui-btn-primary layui-btn-sm">重置</button>
+        </div>
+    </div>
+</form>
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['form', 'jquery', 'laydate'], function () {
+        let form = layui.form;
+        let $ = layui.jquery;
+        let MODULE_PATH = rootPath + "/ItemAlertRuleController";
+        layui.laydate.render({elem: '#effStart', type: 'datetime', format: 'yyyy-MM-dd HH:mm:ss'});
+        layui.laydate.render({elem: '#effEnd', type: 'datetime', format: 'yyyy-MM-dd HH:mm:ss'});
+
+        form.on('submit(rule-save)', function (data) {
+            $.ajax({
+                url: MODULE_PATH + '/add',
+                data: data.field,
+                dataType: 'json',
+                type: 'post',
+                success: function (res) {
+                    if (res.code === 200) {
+                        layer.msg(res.msg, {icon: 1, time: 1000}, function () {
+                            parent.layer.close(parent.layer.getFrameIndex(window.name));
+                            parent.layui.table.reload("rule-table");
+                        });
+                    } else {
+                        layer.msg(res.msg, {icon: 2});
+                    }
+                }
+            });
+            return false;
+        });
+    });
+</script>
+</body>
+</html>

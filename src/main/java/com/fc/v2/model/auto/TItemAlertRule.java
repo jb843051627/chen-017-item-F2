@@ -42,7 +42,12 @@ public class TItemAlertRule implements Serializable {
     @ApiModelProperty(value = "线名")
     private String ruleName;
 
-    /** 低界逾期率(百分比) */
+    /** 管的事由 1即办件 2承诺件 3转报件（各管各的） */
+    @TableField("affair_type")
+    @ApiModelProperty(value = "管的事由 1即办件 2承诺件 3转报件")
+    private Integer affairType;
+
+    /** 低界逾期率(百分比，空着=不设这一段) */
     @TableField("th1_max")
     @ApiModelProperty(value = "低界逾期率(百分比)")
     private BigDecimal th1Max;
@@ -57,24 +62,24 @@ public class TItemAlertRule implements Serializable {
     @ApiModelProperty(value = "高界逾期率(百分比)")
     private BigDecimal th3Max;
 
-    /** 启用之日 */
+    /** 启用之日（新线自此刻起开口，含） */
     @TableField("eff_start")
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
     @ApiModelProperty(value = "启用之日")
     private Date effStart;
 
-    /** 交棒之日(不含) */
+    /** 收档那一天/交棒之日(不含，旧线管到此刻为止) */
     @TableField("eff_end")
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss", timezone = "GMT+8")
     @ApiModelProperty(value = "交棒之日(不含)")
     private Date effEnd;
 
-    /** 让线顺位(数值大的先说话) */
+    /** 尊卑次序(数值大的先开口；并列认代号排在后头的) */
     @TableField("priority")
     @ApiModelProperty(value = "让线顺位(数值大的先说话)")
     private Integer priority;
 
-    /** 线的情形 0现行 1已让位 */
+    /** 旗 0在档 1收档(收档只许倒查来历，不进当下判定) */
     @TableField("status")
     @ApiModelProperty(value = "线的情形 0现行 1已让位")
     private Integer status;
@@ -133,6 +138,14 @@ public class TItemAlertRule implements Serializable {
 
     public void setRuleName(String ruleName) {
         this.ruleName = ruleName;
+    }
+
+    public Integer getAffairType() {
+        return affairType;
+    }
+
+    public void setAffairType(Integer affairType) {
+        this.affairType = affairType;
     }
 
     public BigDecimal getTh1Max() {

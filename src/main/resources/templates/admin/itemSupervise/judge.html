@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('办件逾期监察判定')"/>
+    <style>
+        .verdict-box {display:none;margin:12px 0;padding:16px 20px;border-radius:6px;border:1px solid #e2e2e2;background:#fafafa;line-height:2}
+        .verdict-box .grade {font-size:22px;font-weight:600}
+        .verdict-box .meta {color:#666;margin-top:6px}
+        .g1{color:#5FB878}.g2{color:#FFB800}.g3,.g4{color:#FF5722}
+        .tag-norule{color:#999}.tag-reject{color:#FF5722}
+    </style>
+</head>
+<body class="pear-container">
+<div class="layui-card">
+    <div class="layui-card-header">
+        办件逾期监察判定
+        <span style="color:#999;font-size:12px;margin-left:12px">
+            窗口自核屏与局监察屏同走这一个判定口子：凭受理日取在档尺，线与等级、代号、上架之日全由服务现算现给，本屏不自行取尺、不先摆结论。
+        </span>
+    </div>
+    <div class="layui-card-body">
+        <form class="layui-form" lay-filter="judge-form">
+            <div class="layui-form-item">
+                <label class="layui-form-label">办件编号</label>
+                <div class="layui-input-inline" style="width:200px">
+                    <input type="text" name="caseNo" autocomplete="off" placeholder="办件编号" class="layui-input">
+                </div>
+                <label class="layui-form-label">事由</label>
+                <div class="layui-input-inline" style="width:140px">
+                    <select name="affairType">
+                        <option value="1">即办件</option>
+                        <option value="2" selected>承诺件</option>
+                        <option value="3">转报件</option>
+                    </select>
+                </div>
+            </div>
+            <div class="layui-form-item">
+                <label class="layui-form-label">受理之日</label>
+                <div class="layui-input-inline" style="width:200px">
+                    <input type="text" name="acceptAt" id="acceptAt" autocomplete="off" placeholder="yyyy-MM-dd（取尺凭它，不凭今日）" class="layui-input">
+                </div>
+                <label class="layui-form-label">算到今日逾期率%</label>
+                <div class="layui-input-inline" style="width:160px">
+                    <input type="number" step="0.01" min="0" max="100" name="overdueRate" autocomplete="off" placeholder="只收 0..100" class="layui-input">
+                </div>
+                <button class="pear-btn pear-btn-primary pear-btn-md" lay-submit lay-filter="do-judge">
+                    <i class="layui-icon layui-icon-template-1"></i> 判定并钉账
+                </button>
+            </div>
+        </form>
+
+        <!-- 判定回显：提交前不摆任何结论；提交后只展示服务给回的那一套 -->
+        <div id="verdictBox" class="verdict-box"></div>
+    </div>
+</div>
+
+<div class="layui-card">
+    <div class="layui-card-header">当下在警清单（已销的不再出现）</div>
+    <div class="layui-card-body">
+        <table id="alert-table" lay-filter="alert-table"></table>
+    </div>
+</div>
+
+<div class="layui-card">
+    <div class="layui-card-header">单件台账倒查（评定/销警/无从依凭各成一笔，钉过不改口）</div>
+    <div class="layui-card-body">
+        <table id="history-table" lay-filter="history-table"></table>
+    </div>
+</div>
+
+<script type="text/html" id="record-kind">
+    {{# if(d.recordKind === 1){ }}<span class="layui-badge layui-bg-blue">评定</span>
+    {{# } else if(d.recordKind === 2){ }}<span class="layui-badge layui-bg-gray">销警</span>
+    {{# } else { }}<span class="layui-badge layui-bg-orange">无从依凭</span>{{# } }}
+</script>
+<script type="text/html" id="grade-text">
+    {{# if(d.gradeLevel === 1){ }}低段
+    {{# } else if(d.gradeLevel === 2){ }}中段
+    {{# } else if(d.gradeLevel === 3){ }}高段
+    {{# } else if(d.gradeLevel === 4){ }}超高段
+    {{# } else { }}—{{# } }}
+</script>
+</body>
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['table', 'form', 'jquery', 'laydate'], function () {
+        let table = layui.table, form = layui.form, $ = layui.jquery;
+        let MODULE_PATH = rootPath + "/ItemSuperviseController/";
+        layui.laydate.render({elem: '#acceptAt', type: 'date', format: 'yyyy-MM-dd'});
+
+        function gradeName(g) {
+            return ['', '低段', '中段', '高段', '超高段'][g] || '—';
+        }
+
+        function renderVerdict(res) {
+            let jr = res.data;
+            if (jr.status === 1) {
+                $('#verdictBox').show().attr('class', 'verdict-box').html(
+                    '<span class="tag-norule">本趟无从依凭：受理当日翻不出在档可用尺，已落一笔，未硬给结论。</span>');
+                return;
+            }
+            let gradeRec = jr.records.filter(function (r) { return r.recordKind === 1; })[0];
+            if (!gradeRec) { $('#verdictBox').show().html(res.msg); return; }
+            let relief = jr.records.filter(function (r) { return r.recordKind === 2; });
+            let html = '<div><span class="grade g' + gradeRec.gradeLevel + '">' + gradeName(gradeRec.gradeLevel) + '</span>'
+                + ' <span style="color:#999">（所依：' + gradeRec.ruleCode + '，该尺上架之日 ' + (gradeRec.ruleEffStart || '—') + '）</span></div>'
+                + '<div class="meta">本回逾期率 ' + gradeRec.overdueRate + '% ｜ 已连同等级、代号、上架之日钉进台账，钉过不改口。</div>';
+            if (relief.length) {
+                html += '<div class="meta tag-reject">逾期率落回中段以下：先前 ' + relief.length
+                    + ' 层警报已另笔销掉，新旧两笔各留各的代号与日子。</div>';
+            }
+            $('#verdictBox').show().attr('class', 'verdict-box').html(html);
+        }
+
+        form.on('submit(do-judge)', function (data) {
+            let f = data.field;
+            if (!f.caseNo || !f.acceptAt || f.overdueRate === '') {
+                layer.msg('办件编号、受理之日、逾期率都要填', {icon: 2});
+                return false;
+            }
+            $.post(MODULE_PATH + 'judge', f, function (res) {
+                if (res.code !== 200) {
+                    // 越界/缺件：不摆结论，退回监察员重录
+                    $('#verdictBox').show().attr('class', 'verdict-box')
+                        .html('<span class="tag-reject">' + res.msg + '</span>');
+                    return;
+                }
+                renderVerdict(res);
+                table.reload('alert-table');
+                table.reload('history-table', {where: {caseNo: f.caseNo}, page: {curr: 1}});
+            });
+            return false;
+        });
+
+        table.render({
+            elem: '#alert-table', url: MODULE_PATH + 'alerts', method: 'get', page: true,
+            cols: [[
+                {field: 'caseNo', title: '办件编号', width: 160},
+                {field: 'affairType', title: '事由', width: 90, templet: function (d) {
+                    return {1: '即办件', 2: '承诺件', 3: '转报件'}[d.affairType] || '—'; }},
+                {field: 'gradeLevel', title: '警在层级', width: 100, templet: '#grade-text'},
+                {field: 'overdueRate', title: '当时逾期率%', width: 120},
+                {field: 'ruleCode', title: '所依代号', width: 150},
+                {field: 'ruleEffStart', title: '所依尺上架之日', width: 170},
+                {field: 'judgedAt', title: '钉账之时', width: 170}
+            ]]
+        });
+
+        table.render({
+            elem: '#history-table', url: MODULE_PATH + 'history', method: 'get', page: true,
+            where: {caseNo: ''},
+            cols: [[
+                {field: 'judgedAt', title: '落账之时', width: 170},
+                {field: 'recordKind', title: '笔性', width: 100, templet: '#record-kind'},
+                {field: 'overdueRate', title: '逾期率%', width: 100},
+                {field: 'gradeLevel', title: '等级', width: 90, templet: '#grade-text'},
+                {field: 'ruleCode', title: '所依代号', width: 150},
+                {field: 'ruleEffStart', title: '所依尺上架之日', width: 170},
+                {field: 'acceptAt', title: '受理之日', width: 120},
+                {field: 'remark', title: '记事', minWidth: 200}
+            ]]
+        });
+    });
+</script>
+</html>
