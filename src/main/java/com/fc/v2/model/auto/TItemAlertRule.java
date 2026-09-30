@@ -42,6 +42,11 @@ public class TItemAlertRule implements Serializable {
     @ApiModelProperty(value = "线名")
     private String ruleName;
 
+    /** 所管事由 IMMEDIATE即办件 PROMISE承诺件 TRANSFER转报件(各管各的) */
+    @TableField("biz_type")
+    @ApiModelProperty(value = "所管事由 IMMEDIATE即办件 PROMISE承诺件 TRANSFER转报件")
+    private String bizType;
+
     /** 低界逾期率(百分比) */
     @TableField("th1_max")
     @ApiModelProperty(value = "低界逾期率(百分比)")
@@ -133,6 +138,14 @@ public class TItemAlertRule implements Serializable {
 
     public void setRuleName(String ruleName) {
         this.ruleName = ruleName;
+    }
+
+    public String getBizType() {
+        return bizType;
+    }
+
+    public void setBizType(String bizType) {
+        this.bizType = bizType;
     }
 
     public BigDecimal getTh1Max() {

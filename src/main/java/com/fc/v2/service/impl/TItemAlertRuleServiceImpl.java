@@ -1,6 +1,8 @@
 package com.fc.v2.service.impl;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Date;
 import java.util.List;
@@ -10,10 +12,17 @@ import org.springframework.stereotype.Service;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.fc.v2.mapper.auto.TItemAlertRuleMapper;
 import com.fc.v2.model.auto.TItemAlertRule;
+import com.fc.v2.model.custom.RuleVerdict;
 import com.fc.v2.service.ITItemAlertRuleService;
 
 /**
- * 办件逾期风险判定线 Service业务层处理（rule-eval 形状）
+ * 办件逾期风险判定线 Service业务层处理。
+ *
+ * 全市一套说法、取刻度只走一处：取尺与定层同在 {@link #evaluate(BigDecimal, Date, String)}
+ * 这一回判定里完成，中间不夹第二回计算。
+ *
+ * 换手口径：窗口半开区间 [effStart, effEnd)，旧尺管到 effEnd 前一刻、新尺自 effEnd 开口，
+ * 窗口自核屏与局里监察屏都走这里，日子界限只有这一种讲法。
  *
  * @author fuce
  * @date 2026-09-14
@@ -21,7 +30,14 @@ import com.fc.v2.service.ITItemAlertRuleService;
 @Service
 public class TItemAlertRuleServiceImpl implements ITItemAlertRuleService {
 
-    /** 优先级降序；并列按 ruleCode 降序（确定性） */
+    /** 在档 */
+    private static final int STATUS_ACTIVE = 0;
+    /** 收档 */
+    private static final int STATUS_ARCHIVED = 1;
+
+    private static final BigDecimal HUNDRED = new BigDecimal("100");
+
+    /** 尊卑次序：priority 降序（数值大先开口）；并列认代号排在后头（ruleCode 降序），季季同此一认法 */
     private static final Comparator<TItemAlertRule> PRIORITY_THEN_CODE_DESC = new Comparator<TItemAlertRule>() {
         @Override
         public int compare(TItemAlertRule a, TItemAlertRule b) {
@@ -39,51 +55,84 @@ public class TItemAlertRuleServiceImpl implements ITItemAlertRuleService {
     @javax.annotation.Resource
     private TItemAlertRuleMapper itemAlertRuleMapper;
 
-    /**
-     * 时段比较统一走**墙钟字符串**（yyyy-MM-dd HH:mm:ss）+ 字符串绑定：
-     * JDBC 的 serverTimezone 与本机时区不对称，直接把 java.util.Date 作参数会整体偏移，
-     * 使边界判定在"切换当日"这类用例上随机错档（实测踩到）。
-     */
-    private static String ts(Date d) {
-        return new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(d);
-    }
-
     @Override
     public TItemAlertRule selectTItemAlertRuleById(Long id) {
         return this.itemAlertRuleMapper.selectById(id);
     }
 
     @Override
-    public List<TItemAlertRule> listAvailable(Date at) {
-        if (at == null) {
-            return new java.util.ArrayList<TItemAlertRule>();
+    public RuleVerdict evaluate(BigDecimal input, Date acceptAt, String bizType) {
+        if (!validInput(input) || acceptAt == null || bizType == null || bizType.trim().isEmpty()) {
+            return RuleVerdict.rejected(input, acceptAt, bizType);
         }
-        return this.itemAlertRuleMapper.selectList(new QueryWrapper<TItemAlertRule>().eq("del_flag", 0));
+        TItemAlertRule rule = pickRule(acceptAt, bizType);
+        if (rule == null) {
+            // 翻不出可用尺：写明无从依凭，不拿邻近日子的尺凑数
+            return RuleVerdict.noRule(input, acceptAt, bizType);
+        }
+        return RuleVerdict.of(levelOf(rule, input), rule.getRuleCode(), rule.getEffStart(),
+                rule.getRuleName(), input, acceptAt, bizType);
+    }
+
+    @Override
+    public RuleVerdict evaluate(String ruleCode, BigDecimal input, Date acceptAt, String bizType) {
+        if (ruleCode == null || ruleCode.trim().isEmpty() || !validInput(input) || acceptAt == null) {
+            return RuleVerdict.rejected(input, acceptAt, bizType);
+        }
+        TItemAlertRule rule = findByCodeAt(ruleCode, acceptAt, bizType);
+        if (rule == null) {
+            return RuleVerdict.noRule(input, acceptAt, bizType);
+        }
+        return RuleVerdict.of(levelOf(rule, input), rule.getRuleCode(), rule.getEffStart(),
+                rule.getRuleName(), input, acceptAt, bizType);
     }
 
     @Override
     public int evaluate(String ruleCode, BigDecimal input, Date at) {
-        if (ruleCode == null || ruleCode.trim().isEmpty() || input == null || at == null) {
+        if (ruleCode == null || ruleCode.trim().isEmpty() || !validInput(input) || at == null) {
             return 0;
         }
-        TItemAlertRule rule = findRule(ruleCode, at);
-        return levelOf(rule, input);
+        TItemAlertRule rule = findByCodeAt(ruleCode, at, null);
+        return rule == null ? 0 : levelOf(rule, input);
     }
 
     @Override
     public int evaluateTop(BigDecimal input, Date at) {
-        if (input == null || at == null) {
+        return evaluateTop(input, at, null);
+    }
+
+    @Override
+    public int evaluateTop(BigDecimal input, Date at, String bizType) {
+        if (!validInput(input) || at == null) {
             return 0;
         }
-        if (input.compareTo(BigDecimal.ZERO) < 0
-                || input.compareTo(new BigDecimal("100")) > 0) {
-            return 0;
+        List<TItemAlertRule> avail = listAvailable(at, bizType);
+        return avail.isEmpty() ? 0 : levelOf(avail.get(0), input);
+    }
+
+    @Override
+    public List<TItemAlertRule> listAvailable(Date at) {
+        return listAvailable(at, null);
+    }
+
+    @Override
+    public List<TItemAlertRule> listAvailable(Date at, String bizType) {
+        if (at == null) {
+            return new ArrayList<TItemAlertRule>();
         }
-        List<TItemAlertRule> avail = listAvailable(at);
-        if (avail.isEmpty()) {
-            return 0;
+        String type = bizType == null || bizType.trim().isEmpty() ? null : bizType.trim();
+        // 只按 del_flag 取，事由与窗口都在 Java 侧判：日期判定绕开 JDBC 时区错位，
+        // 事由与窗口收在同一处，保证无库旁路/单测与线上是同一套口径。
+        List<TItemAlertRule> all = this.itemAlertRuleMapper.selectList(
+                new QueryWrapper<TItemAlertRule>().eq("del_flag", 0));
+        List<TItemAlertRule> hit = new ArrayList<TItemAlertRule>();
+        for (TItemAlertRule r : all) {
+            if ((type == null || type.equals(r.getBizType())) && eligibleAt(r, at)) {
+                hit.add(r);
+            }
         }
-        return levelOf(avail.get(0), input);
+        Collections.sort(hit, PRIORITY_THEN_CODE_DESC);
+        return hit;
     }
 
     @Override
@@ -92,59 +141,83 @@ public class TItemAlertRuleServiceImpl implements ITItemAlertRuleService {
             return false;
         }
         TItemAlertRule r = this.itemAlertRuleMapper.selectById(id);
-        return r != null;
+        return r != null && eligibleAt(r, at);
     }
 
     @Override
     public int countAvailable(Date at) {
-        if (at == null) {
-            return 0;
-        }
-        return this.itemAlertRuleMapper
-                .selectList(new QueryWrapper<TItemAlertRule>().eq("del_flag", 0)).size();
+        return countAvailable(at, null);
     }
 
-    private TItemAlertRule findRule(String ruleCode, Date at) {
+    @Override
+    public int countAvailable(Date at, String bizType) {
+        return listAvailable(at, bizType).size();
+    }
+
+    /** 取尺：该事由、受理日窗口内请尊卑最高者 */
+    private TItemAlertRule pickRule(Date acceptAt, String bizType) {
+        List<TItemAlertRule> avail = listAvailable(acceptAt, bizType);
+        return avail.isEmpty() ? null : avail.get(0);
+    }
+
+    /** 按代号取其在 at 窗口内的那一条（代号独占一个，换手后新旧各是各的代号）；bizType 非空时须同事由 */
+    private TItemAlertRule findByCodeAt(String ruleCode, Date at, String bizType) {
+        String type = bizType == null || bizType.trim().isEmpty() ? null : bizType.trim();
         List<TItemAlertRule> hit = this.itemAlertRuleMapper.selectList(new QueryWrapper<TItemAlertRule>()
                 .eq("del_flag", 0).eq("rule_code", ruleCode));
-        TItemAlertRule newest = null;
         for (TItemAlertRule r : hit) {
-            if (newest == null || r.getEffEnd() == null) {
-                newest = r;
-            } else if (newest.getEffEnd() != null && r.getEffEnd().after(newest.getEffEnd())) {
-                newest = r;
+            if ((type == null || type.equals(r.getBizType())) && eligibleAt(r, at)) {
+                return r;
             }
         }
-        return newest;
+        return null;
     }
 
-    /** 阈值解析：档案为主、明细覆盖；两者皆缺返回 null（调用方按不可用处理），精度统一 2 位 */
-    private BigDecimal resolveLimit(TItemAlertRule r, int tier) {
-        if (tier == 1) {
-            return r.getTh1Max();
+    /**
+     * 是否在 at 时刻开口。窗口半开 [effStart, effEnd)，统一在 Java 侧按毫秒比：
+     * JDBC 的 serverTimezone 与本机时区不对称，把 Date 直接绑进 SQL 会在换手当天整体错档。
+     * 另：收了档（status=1）又无 effEnd 的尺不许挤进当下判定；有 effEnd 的旧尺只在其
+     * 历史窗口内为旧案开口（去年秋受理、今春补结论请的就是它）。
+     */
+    private boolean eligibleAt(TItemAlertRule r, Date at) {
+        if (r.getEffStart() == null) {
+            return false;
         }
-        if (tier == 2) {
-            return r.getTh2Max();
+        long t = at.getTime();
+        boolean inWindow = t >= r.getEffStart().getTime()
+                && (r.getEffEnd() == null || t < r.getEffEnd().getTime());
+        if (!inWindow) {
+            return false;
         }
-        return r.getTh3Max();
+        boolean archivedOpen = r.getStatus() != null && r.getStatus() == STATUS_ARCHIVED
+                && r.getEffEnd() == null;
+        return !archivedOpen;
     }
 
-    /** 档案级默认阈值（明细未维护时的回退来源） */
-    private BigDecimal defaultThreshold(TItemAlertRule r, int tier) {
-        return r.getTh1Max();
+    /** 合法递数：空、负数、过百一律退回重录 */
+    private boolean validInput(BigDecimal input) {
+        return input != null
+                && input.compareTo(BigDecimal.ZERO) >= 0
+                && input.compareTo(HUNDRED) <= 0;
     }
 
-    /** 分档：等于上限取高一档 */
+    /**
+     * 定层：从低段起，每"撞上或越过"一道设着的刻度升一级。
+     * 用"&gt;="即与刻度齐平也算撞上高段（往高里取）。
+     * 某道刻度空着＝不设这一道：计数时自然跳过——高段界(th3)空着时，越过中段最高只到
+     * 高段(3)，顶段(4)不设，即"跟着中段往下落"，不断档、不报错。
+     */
     private int levelOf(TItemAlertRule rule, BigDecimal input) {
-        if (rule.getTh1Max() != null && input.compareTo(rule.getTh1Max()) <= 0) {
-            return 1;
+        int level = 1;
+        if (rule.getTh1Max() != null && input.compareTo(rule.getTh1Max()) >= 0) {
+            level++;
         }
-        if (rule.getTh2Max() != null && input.compareTo(rule.getTh2Max()) <= 0) {
-            return 2;
+        if (rule.getTh2Max() != null && input.compareTo(rule.getTh2Max()) >= 0) {
+            level++;
         }
-        if (rule.getTh3Max() != null && input.compareTo(rule.getTh3Max()) <= 0) {
-            return 3;
+        if (rule.getTh3Max() != null && input.compareTo(rule.getTh3Max()) >= 0) {
+            level++;
         }
-        return 4;
+        return level;
     }
 }
